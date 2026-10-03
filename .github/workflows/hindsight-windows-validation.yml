@@ -1,0 +1,32 @@
+name: Hindsight Windows follow-through
+on:
+  push:
+    branches: [test/hindsight-windows-validation-20261003]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 5
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hindsight-contribution
+          cache-on-failure: true
+      - name: Format touched source
+        run: python scripts/hindsight-contribution-validation.py format
+      - name: Check Windows Clippy baseline and complete runtime gates
+        run: python scripts/hindsight-windows-validation.py
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: hindsight-windows-complete
+          path: contribution-validation

@@ -1,0 +1,44 @@
+name: Hindsight contribution validation
+on:
+  push:
+    branches: [test/hindsight-cache-validation-20261003]
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hindsight-contribution
+      - name: Format the two changed Rust files
+        run: python scripts/hindsight-contribution-validation.py format
+      - uses: actions/upload-artifact@v6
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: formatted-hindsight
+          path: |
+            crates/tokscale-core/src/sessions/hindsight.rs
+            crates/tokscale-core/src/message_cache.rs
+      - name: Prove regressions fail on unchanged production source
+        run: python scripts/hindsight-contribution-validation.py baseline
+      - name: Verify fixed source and required Rust gates
+        run: python scripts/hindsight-contribution-validation.py final
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: hindsight-validation-${{ matrix.os }}
+          path: contribution-validation

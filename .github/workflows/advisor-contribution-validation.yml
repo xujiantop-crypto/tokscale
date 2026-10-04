@@ -24,6 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: hindsight-contribution
+          cache-on-failure: true
       - name: Format changed sources
         run: python scripts/advisor-contribution-validation.py format
       - name: Prove regressions and CLI fail on the base implementation

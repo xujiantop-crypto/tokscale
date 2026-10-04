@@ -23,8 +23,14 @@ def cli(name):
     fixture_path.write_bytes(Path('scripts/advisor-cli-fixture.jsonl').read_bytes())
     config=(out/(name+'-config')).resolve(); config.mkdir(exist_ok=True)
     env=dict(os.environ,TOKSCALE_CONFIG_DIR=str(config),XDG_CACHE_HOME=str(config/'cache'),XDG_CONFIG_HOME=str(config))
-    result=run(name,['cargo','run','--locked','-p','tokscale-cli','--','models','--json','--no-spinner','--home',str(fixture_home),'--client','claude'],env=env)
-    obj=json.loads(result.stdout[result.stdout.index('{'):])
+    run(name+'-build',['cargo','build','--locked','-p','tokscale-cli'])
+    binary=Path('target/debug/tokscale'+('.exe' if os.name=='nt' else '')).resolve()
+    result=subprocess.run([str(binary),'models','--json','--no-spinner','--home',str(fixture_home),'--client','claude'],capture_output=True,encoding='utf-8',errors='replace',env=env)
+    (out/(name+'.log')).write_text(result.stdout,encoding='utf-8')
+    (out/(name+'-stderr.log')).write_text(result.stderr,encoding='utf-8')
+    assert result.returncode==0,result.stderr
+    obj=json.loads(result.stdout)
+    print(name,'models',[(e['model'],e['input'],e['output']) for e in obj['entries']],flush=True)
     (out/(name+'.json')).write_text(json.dumps(obj,indent=2),encoding='utf-8')
     return obj
 

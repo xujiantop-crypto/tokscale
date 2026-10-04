@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 3
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy, rustfmt
@@ -36,3 +36,4 @@ jobs:
         with:
           name: advisor-validation-${{ matrix.os }}
           path: contribution-validation
+

@@ -5335,6 +5335,129 @@ not valid json at all
         assert_eq!(m.cost_source, CostSource::ProviderReported);
     }
 
+
+    // Replay the synthetic CLI fixture from #1388 through the real pricing
+    // dispatch: credits must not be charged again from the same turn's tokens.
+    fn cli_credit_repro_session(dir: &TempDir, stem: &str, credited: bool) -> PathBuf {
+        let ids = ["missing", "a-1", "a-2", "a-3", "missing-too"];
+        let turns: Vec<Value> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let mut turn = serde_json::json!({
+                    "input_token_count": 0,
+                    "output_token_count": 0,
+                    "message_ids": [id]
+                });
+                if index == 1 {
+                    turn["total_request_count"] = serde_json::json!(3);
+                    turn["context_usage_percentage"] = serde_json::json!(10.0);
+                }
+                if credited && matches!(index, 0 | 3 | 4) {
+                    turn["metering_usage"] =
+                        serde_json::json!([{"value": 0.25, "unit": "credit"}]);
+                }
+                turn
+            })
+            .collect();
+        let json = serde_json::json!({
+            "session_id": stem,
+            "cwd": "/tmp/project",
+            "session_state": {
+                "rts_model_state": {"model_info": {
+                    "model_id": "claude-sonnet-4-5", "context_window_tokens": 1000
+                }},
+                "conversation_metadata": {"user_turn_metadatas": turns}
+            }
+        });
+        let jsonl = [
+            (1, "hello world", "response text", 1770983426.0),
+            (2, "next", "done", 1770983500.0),
+            (3, "third", "last answer", 1771070000.0),
+        ]
+        .into_iter()
+        .map(|(index, prompt, answer, timestamp)| {
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({"version": "v1", "kind": "Prompt", "data": {
+                    "message_id": format!("p-{index}"),
+                    "content": [{"kind": "text", "data": prompt}],
+                    "meta": {"timestamp": timestamp}
+                }}),
+                serde_json::json!({"version": "v1", "kind": "AssistantMessage", "data": {
+                    "message_id": format!("a-{index}"),
+                    "content": [{"kind": "text", "data": answer}]
+                }})
+            )
+        })
+        .collect::<String>();
+        create_session_files(dir, stem, &json.to_string(), &jsonl)
+    }
+
+    #[test]
+    fn test_kiro_cli_credits_do_not_double_count_token_pricing() {
+        let dir = TempDir::new().unwrap();
+        let pricing = crate::pricing::PricingService::new(
+            HashMap::from([(
+                "claude-sonnet-4-5".to_string(),
+                crate::pricing::ModelPricing {
+                    input_cost_per_token: Some(0.001),
+                    output_cost_per_token: Some(0.002),
+                    cache_read_input_token_cost: Some(0.0001),
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        );
+        let mut variants = Vec::new();
+        for (stem, credited) in [("control", false), ("credited", true)] {
+            let path = cli_credit_repro_session(&dir, stem, credited);
+            let mut messages = parse_kiro_file(&path);
+            for message in &mut messages {
+                crate::apply_pricing_if_available(message, Some(&pricing));
+                println!(
+                    "REPRO {stem} key={:?} in={} out={} cr={} cost={:.6} authoritative={}",
+                    message.dedup_key,
+                    message.tokens.input,
+                    message.tokens.output,
+                    message.tokens.cache_read,
+                    message.cost,
+                    message.has_authoritative_cost()
+                );
+            }
+            println!(
+                "REPRO {stem} total={:.6}",
+                messages.iter().map(|message| message.cost).sum::<f64>()
+            );
+            variants.push(messages);
+        }
+        let control = &variants[0];
+        let credited = &variants[1];
+        assert_eq!(control.len(), 3);
+        assert_eq!(credited.len(), 3);
+        assert_cost_approx(
+            control.iter().map(|message| message.cost).sum(),
+            0.0317,
+            "unmetered control total",
+        );
+        assert_cost_approx(
+            credited.iter().map(|message| message.cost).sum(),
+            0.033,
+            "credited total with only the unmetered turn token-priced",
+        );
+        for (index, expected_cost) in [0.010, 0.003, 0.020].into_iter().enumerate() {
+            let message = &credited[index];
+            assert_cost_approx(message.cost, expected_cost, "per-turn cost");
+            assert_eq!(message.has_authoritative_cost(), index != 1);
+            assert_eq!(message.tokens, control[index].tokens);
+            assert_eq!(message.timestamp, control[index].timestamp);
+            assert_eq!(message.duration_ms, control[index].duration_ms);
+            assert_eq!(message.message_count, control[index].message_count);
+            assert_eq!(message.workspace_key, control[index].workspace_key);
+            assert_eq!(message.dedup_key, Some(format!("credited:{}", index + 1)));
+        }
+    }
+
     // Unit: empty / absent metering_usage leaves cost 0.0 / Unknown so the
     // downstream pricing service estimates from the hybrid breakdown.
     #[test]

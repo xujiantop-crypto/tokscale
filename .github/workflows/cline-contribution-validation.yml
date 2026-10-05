@@ -1,4 +1,4 @@
-name: Cline input contribution validation
+name: Cline cache test isolation validation
 on:
   push:
     branches: [test/cline-input-validation-20261005]
@@ -11,7 +11,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 35
     env:
       CARGO_TERM_COLOR: never
     steps:
@@ -25,14 +25,12 @@ jobs:
         with:
           shared-key: hindsight-contribution
           cache-on-failure: true
-      - name: Format changed sources
-        run: python scripts/cline-contribution-validation.py format
-      - name: Prove regressions and real graph inconsistency on base
-        run: python scripts/cline-contribution-validation.py baseline
-      - name: Validate fixed code and required gates
-        run: python scripts/cline-contribution-validation.py final
+      - name: Prove inherited Cline roots break the published test
+        run: python scripts/cline-test-isolation-validation.py baseline
+      - name: Validate isolated cache regression and core suite
+        run: python scripts/cline-test-isolation-validation.py fixed
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: cline-validation-${{ matrix.os }}
-          path: contribution-validation
+          name: cline-isolation-${{ matrix.os }}
+          path: contribution-validation-isolation

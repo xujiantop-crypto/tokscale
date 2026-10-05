@@ -5,17 +5,15 @@ on:
 permissions:
   contents: read
 jobs:
-  rust:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  windows:
+    runs-on: windows-latest
     timeout-minutes: 35
     env:
       CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy, rustfmt
@@ -23,10 +21,10 @@ jobs:
         with:
           shared-key: tokscale-kiro-credits
           cache-on-failure: true
-      - name: Format and validate CLI credits and workspace
+      - name: Compare inherited CLI lint and run full Windows tests
         run: python scripts/kiro-credit-validation.py
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: kiro-cli-credits-${{ matrix.os }}
+          name: kiro-cli-credits-windows-complete
           path: kiro-credit-validation

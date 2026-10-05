@@ -5345,7 +5345,6 @@ not valid json at all
         assert_eq!(m.cost_source, CostSource::ProviderReported);
     }
 
-
     // Replay the synthetic CLI fixture from #1388 through the real pricing
     // dispatch: credits must not be charged again from the same turn's tokens.
     fn cli_credit_repro_session(dir: &TempDir, stem: &str, credited: bool) -> PathBuf {
@@ -5364,8 +5363,7 @@ not valid json at all
                     turn["context_usage_percentage"] = serde_json::json!(10.0);
                 }
                 if credited && matches!(index, 0 | 3 | 4) {
-                    turn["metering_usage"] =
-                        serde_json::json!([{"value": 0.25, "unit": "credit"}]);
+                    turn["metering_usage"] = serde_json::json!([{"value": 0.25, "unit": "credit"}]);
                 }
                 turn
             })
@@ -5468,7 +5466,6 @@ not valid json at all
         }
     }
 
-
     #[test]
     fn test_kiro_cli_skipped_credits_use_nearest_emitted_turn() {
         for (emitted, expected) in [
@@ -5481,11 +5478,13 @@ not valid json at all
             let dir = TempDir::new().unwrap();
             let turns: Vec<Value> = emitted
                 .iter()
-                .map(|emit| serde_json::json!({
-                    "input_token_count": i64::from(*emit),
-                    "output_token_count": i64::from(*emit) * 2,
-                    "metering_usage": [{"value": 0.25, "unit": "credit"}]
-                }))
+                .map(|emit| {
+                    serde_json::json!({
+                        "input_token_count": i64::from(*emit),
+                        "output_token_count": i64::from(*emit) * 2,
+                        "metering_usage": [{"value": 0.25, "unit": "credit"}]
+                    })
+                })
                 .collect();
             let json = serde_json::json!({"session_id": "nearest", "session_state": {
                 "conversation_metadata": {"user_turn_metadatas": turns}
@@ -5523,9 +5522,11 @@ not valid json at all
         ];
         let turns: Vec<Value> = metering
             .into_iter()
-            .map(|usage| serde_json::json!({
-                "input_token_count": 1, "output_token_count": 1, "metering_usage": usage
-            }))
+            .map(|usage| {
+                serde_json::json!({
+                    "input_token_count": 1, "output_token_count": 1, "metering_usage": usage
+                })
+            })
             .collect();
         let json = serde_json::json!({"session_id": "invalid-credits", "session_state": {
             "conversation_metadata": {"user_turn_metadatas": turns}
@@ -5537,7 +5538,11 @@ not valid json at all
             assert_eq!(message.cost, 0.0);
             assert_eq!(message.cost_source, CostSource::Unknown);
         }
-        assert_cost_approx(messages[7].cost, 0.012, "only credit-unit values contribute");
+        assert_cost_approx(
+            messages[7].cost,
+            0.012,
+            "only credit-unit values contribute",
+        );
         assert_eq!(messages[7].cost_source, CostSource::ProviderReported);
     }
 

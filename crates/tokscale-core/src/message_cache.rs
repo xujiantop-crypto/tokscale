@@ -6319,7 +6319,6 @@ mod tests {
         assert_warm("a re-parsed session");
     }
 
-
     #[test]
     #[serial_test::serial]
     fn test_kiro_cli_credit_cache_is_rebuilt_without_source_changes() {
@@ -6366,8 +6365,13 @@ mod tests {
         );
         let shard = cache_shard_path(identity, &source);
         ensure_cache_dir(shard.parent().unwrap()).unwrap();
-        write_shard_with_limit(&shard, stale_identity, &[stale_entry], MAX_CACHE_SHARD_BYTES)
-            .unwrap();
+        write_shard_with_limit(
+            &shard,
+            stale_identity,
+            &[stale_entry],
+            MAX_CACHE_SHARD_BYTES,
+        )
+        .unwrap();
         assert!(SourceMessageCache::load().get(identity, &source).is_none());
         assert!(matches!(
             SourceFingerprint::check_kiro_path_samples_only(&source, Some(&fingerprint)),
@@ -6387,13 +6391,20 @@ mod tests {
         assert_eq!(first.len(), 2);
         for message in &first {
             assert!((message.cost - 0.01).abs() < 1e-9);
-            assert_eq!(message.cost_source, crate::sessions::CostSource::ProviderReported);
+            assert_eq!(
+                message.cost_source,
+                crate::sessions::CostSource::ProviderReported
+            );
         }
         let rebuilt = SourceMessageCache::load();
         let cached = rebuilt.get(identity, &source).unwrap();
         assert_eq!(cached.fingerprint, fingerprint);
         assert_eq!(cached.messages, first);
-        assert_eq!(parse(), first, "warm cache must retain per-turn cost authority");
+        assert_eq!(
+            parse(),
+            first,
+            "warm cache must retain per-turn cost authority"
+        );
     }
 
     #[test]

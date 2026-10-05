@@ -4450,10 +4450,24 @@ mod tests {
             std::fs::write(source.with_file_name("fork.jsonl"), record).unwrap();
             let forked = scan();
             let usage = |messages: &[UnifiedMessage]| {
-                messages.iter().map(|m| (m.dedup_key.clone(), m.model_id.clone(), m.tokens.clone(), m.message_count)).collect::<Vec<_>>()
+                messages
+                    .iter()
+                    .map(|m| {
+                        (
+                            m.dedup_key.clone(),
+                            m.model_id.clone(),
+                            m.tokens.clone(),
+                            m.message_count,
+                        )
+                    })
+                    .collect::<Vec<_>>()
             };
             // The first sorted live copy owns session attribution; usage is stable.
-            assert_eq!(usage(&forked), usage(&rebuilt), "fork copies must not count advisors twice");
+            assert_eq!(
+                usage(&forked),
+                usage(&rebuilt),
+                "fork copies must not count advisors twice"
+            );
         }
     }
 

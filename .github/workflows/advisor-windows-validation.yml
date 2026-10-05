@@ -1,0 +1,30 @@
+name: Claude advisor Windows followthrough
+on:
+  push:
+    branches: [test/claude-advisor-windows-validation-20261005]
+permissions:
+  contents: read
+jobs:
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hindsight-contribution
+          cache-on-failure: true
+      - name: Compare extra Windows Clippy baseline and finish native gates
+        run: python scripts/advisor-windows-validation.py followthrough
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: advisor-windows-complete
+          path: contribution-validation

@@ -1,0 +1,33 @@
+{
+  "sessionId": "s1",
+  "agent": "lead",
+  "messages": [
+    {
+      "id": "u1",
+      "role": "user",
+      "ts": 1786406000000,
+      "content": [
+        {
+          "type": "text",
+          "text": "hi"
+        }
+      ]
+    },
+    {
+      "id": "a1",
+      "role": "assistant",
+      "ts": 1786406085634,
+      "modelInfo": {
+        "id": "deepseek-v4-flash",
+        "provider": "opencode-go"
+      },
+      "metrics": {
+        "inputTokens": 10,
+        "outputTokens": 10,
+        "cacheReadTokens": 100,
+        "cacheWriteTokens": 50,
+        "cost": 0.01
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+name: Cline input contribution validation
+on:
+  push:
+    branches: [test/cline-input-validation-20261005]
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hindsight-contribution
+          cache-on-failure: true
+      - name: Format changed sources
+        run: python scripts/cline-contribution-validation.py format
+      - name: Prove regressions and real graph inconsistency on base
+        run: python scripts/cline-contribution-validation.py baseline
+      - name: Validate fixed code and required gates
+        run: python scripts/cline-contribution-validation.py final
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: cline-validation-${{ matrix.os }}
+          path: contribution-validation

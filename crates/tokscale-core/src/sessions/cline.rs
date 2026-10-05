@@ -568,9 +568,14 @@ mod cline_input_tests {
     fn parse(entries: Vec<Value>) -> Vec<UnifiedMessage> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("s1.messages.json");
-        std::fs::write(&path, serde_json::to_vec(&serde_json::json!({
-            "sessionId": "s1", "messages": entries
-        })).unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "sessionId": "s1", "messages": entries
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         parse_cline_file(&path)
     }
 
@@ -590,7 +595,10 @@ mod cline_input_tests {
             assert_eq!(message.tokens.output, output);
             assert_eq!(message.tokens.cache_read, read);
             assert_eq!(message.tokens.cache_write, write);
-            assert_eq!(message.tokens.total(), output.saturating_add(read).saturating_add(write));
+            assert_eq!(
+                message.tokens.total(),
+                output.saturating_add(read).saturating_add(write)
+            );
             assert_eq!(message.cost, 0.01);
             assert!(message.has_authoritative_cost());
         }
@@ -601,7 +609,11 @@ mod cline_input_tests {
         let mut entry = fixture(0, 0, 100, 50);
         entry["metrics"].as_object_mut().unwrap().remove("cost");
         let messages = parse(vec![entry]);
-        assert_eq!(messages.len(), 1, "cache usage must survive the empty-message filter");
+        assert_eq!(
+            messages.len(),
+            1,
+            "cache usage must survive the empty-message filter"
+        );
         assert_eq!(messages[0].tokens.input, 0);
         assert_eq!(messages[0].tokens.total(), 150);
         assert!(!messages[0].has_authoritative_cost());
@@ -615,7 +627,9 @@ mod cline_input_tests {
         normal["modelInfo"]["id"] = serde_json::json!("other-model");
         let messages = parse(vec![bad, normal]);
         let mut fold = DailyFold::default();
-        for message in &messages { fold.add(message); }
+        for message in &messages {
+            fold.add(message);
+        }
         let streamed = fold.finish();
         let daily = aggregate_by_date(messages.clone());
         let sessions = aggregate_by_session(messages);
@@ -623,7 +637,14 @@ mod cline_input_tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(daily[0].totals.tokens, 440);
         assert_eq!(daily[0].token_breakdown.total(), 440);
-        assert_eq!(daily[0].clients.iter().map(|c| c.tokens.total()).sum::<i64>(), 440);
+        assert_eq!(
+            daily[0]
+                .clients
+                .iter()
+                .map(|c| c.tokens.total())
+                .sum::<i64>(),
+            440
+        );
         assert_eq!(streamed[0].totals, daily[0].totals);
         assert_eq!(streamed[0].token_breakdown, daily[0].token_breakdown);
         let mut streamed_clients = streamed[0].clients.clone();
@@ -633,7 +654,14 @@ mod cline_input_tests {
         assert_eq!(streamed_clients, daily_clients);
         assert_eq!(sessions[0].totals.tokens, 440);
         assert_eq!(sessions[0].token_breakdown.total(), 440);
-        assert_eq!(sessions[0].clients.iter().map(|c| c.tokens.total()).sum::<i64>(), 440);
+        assert_eq!(
+            sessions[0]
+                .clients
+                .iter()
+                .map(|c| c.tokens.total())
+                .sum::<i64>(),
+            440
+        );
         assert_eq!(daily[0].totals.messages, 2);
         assert_eq!(daily[0].totals.cost, 0.02);
     }

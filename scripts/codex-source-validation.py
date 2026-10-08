@@ -122,15 +122,34 @@ if mode == "baseline":
     finally:
         for path, content in fixed.items():
             Path(path).write_bytes(content)
-elif mode == "final":
+elif mode in ("final", "windows-followthrough"):
     run("format", ["cargo", "fmt", "--all", "--", "--check"])
-    run("clippy", ["cargo", "clippy", "--locked", "--workspace", "--all-features", "--", "-D", "warnings"])
+    clippy_command = ["cargo", "clippy", "--locked", "--workspace", "--all-features", "--", "-D", "warnings"]
+    if mode == "final":
+        run("clippy", clippy_command)
+    else:
+        assert os.name == "nt"
+        fixed_source = {path: Path(path).read_bytes() for path in PRODUCT_PATHS}
+        fixed_lint = run("windows-fixed-clippy", clippy_command, False)
+        try:
+            for path in PRODUCT_PATHS:
+                Path(path).write_bytes(subprocess.check_output(["git", "show", BASE + ":" + path]))
+            base_lint = run("windows-base-clippy", clippy_command, False)
+        finally:
+            for path, content in fixed_source.items():
+                Path(path).write_bytes(content)
+        def diagnostics(result):
+            return sorted(line.strip().replace("\\", "/") for line in (result.stdout + result.stderr).splitlines() if line.startswith("error:") or line.lstrip().startswith("-->"))
+        assert fixed_lint.returncode == base_lint.returncode != 0
+        assert diagnostics(fixed_lint) == diagnostics(base_lint)
+        (OUT / "windows-clippy-baseline.json").write_text(json.dumps({"base": BASE, "fixed_exit": fixed_lint.returncode, "base_exit": base_lint.returncode, "identical_diagnostics": diagnostics(fixed_lint)}, indent=2), encoding="utf-8")
+        run("windows-core-clippy", ["cargo", "clippy", "--locked", "-p", "tokscale-core", "--all-features", "--", "-D", "warnings"])
     run("workspace-tests", ["cargo", "test", "--workspace", "--all-features"])
     run("build-cli", ["cargo", "build", "--locked", "-p", "tokscale-cli"])
     fixed = cli_controls("fixed")
     baseline = json.loads((OUT / "baseline-cli.json").read_text(encoding="utf-8"))
     assert {key: value["stdout"] for key, value in fixed.items()} == {key: value["stdout"] for key, value in baseline.items()}
-    hashes = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in PRODUCT_PATHS}
-    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed", "synthetic_cli_invocations": len(fixed) + len(baseline), "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
+    hashes = {path: hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for path in PRODUCT_PATHS}
+    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed" if mode == "final" else "Windows format/core Clippy/workspace tests/build passed; strict workspace Clippy has identical pinned-base failures", "synthetic_cli_invocations": len(fixed) + len(baseline), "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
 else:
     raise ValueError(mode)

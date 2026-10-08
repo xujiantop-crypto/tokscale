@@ -1,0 +1,37 @@
+name: Codex Windows source checks
+on:
+  push:
+    branches: [test/codex-source-windows-20261009]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tokscale-rust
+          cache-on-failure: true
+      - uses: actions/download-artifact@v7
+        with:
+          name: codex-source-checks-windows-latest
+          run-id: 37847250942
+          github-token: ${{ github.token }}
+          path: codex-source-validation
+      - name: Compare strict Clippy with base and complete runtime checks
+        run: python scripts/codex-source-validation.py windows-followthrough
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: codex-source-windows-complete
+          path: codex-source-validation

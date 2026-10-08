@@ -1,0 +1,36 @@
+name: Codex source completeness checks
+on:
+  push:
+    branches: [test/codex-source-completeness-20261009]
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tokscale-rust
+          cache-on-failure: true
+      - name: Prove missing source warning on the base
+        run: python scripts/codex-source-validation.py baseline
+      - name: Check fixed source and required Rust gates
+        run: python scripts/codex-source-validation.py final
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: codex-source-checks-${{ matrix.os }}
+          path: codex-source-validation

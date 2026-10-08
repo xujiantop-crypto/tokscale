@@ -124,7 +124,7 @@ if mode == "baseline":
             Path(path).write_bytes(content)
 elif mode in ("final", "windows-followthrough"):
     run("format", ["cargo", "fmt", "--all", "--", "--check"])
-    clippy_command = ["cargo", "clippy", "--locked", "--workspace", "--all-features", "--", "-D", "warnings"]
+    clippy_command = ["cargo", "clippy", "--locked", "--workspace", "--all-features", "--message-format=json", "--", "-D", "warnings"]
     if mode == "final":
         run("clippy", clippy_command)
     else:
@@ -139,10 +139,29 @@ elif mode in ("final", "windows-followthrough"):
             for path, content in fixed_source.items():
                 Path(path).write_bytes(content)
         def diagnostics(result):
-            return sorted(line.strip().replace("\\", "/") for line in (result.stdout + result.stderr).splitlines() if line.startswith("error:") or line.lstrip().startswith("-->"))
+            messages = []
+            for line in result.stdout.splitlines():
+                record = json.loads(line)
+                if record.get("reason") == "compiler-message" and record["message"]["level"] in ("error", "warning"):
+                    message = record["message"]
+                    message.pop("rendered", None)
+                    messages.append(message)
+            return sorted(messages, key=lambda value: json.dumps(value, sort_keys=True))
+        fixed_diagnostics = diagnostics(fixed_lint)
+        base_diagnostics = diagnostics(base_lint)
         assert fixed_lint.returncode == base_lint.returncode != 0
-        assert diagnostics(fixed_lint) == diagnostics(base_lint)
-        (OUT / "windows-clippy-baseline.json").write_text(json.dumps({"base": BASE, "fixed_exit": fixed_lint.returncode, "base_exit": base_lint.returncode, "identical_diagnostics": diagnostics(fixed_lint)}, indent=2), encoding="utf-8")
+        assert fixed_diagnostics and fixed_diagnostics == base_diagnostics
+        expected = {
+            ("unused_imports", "crates/tokscale-cli/src/trae.rs", 58),
+            ("dead_code", "crates/tokscale-cli/src/commands/usage/copilot.rs", 63),
+            ("clippy::needless_return", "crates/tokscale-cli/src/antigravity.rs", 1102),
+            ("clippy::needless_return", "crates/tokscale-cli/src/antigravity.rs", 1353),
+            ("clippy::needless_return", "crates/tokscale-cli/src/commands/autosubmit.rs", 1454),
+            ("clippy::needless_return", "crates/tokscale-cli/src/commands/autosubmit.rs", 1558),
+        }
+        observed = {(message["code"]["code"], span["file_name"].replace("\\", "/"), span["line_start"]) for message in fixed_diagnostics for span in message["spans"] if span["is_primary"]}
+        assert len(fixed_diagnostics) == 6 and observed == expected, observed
+        (OUT / "windows-clippy-baseline.json").write_text(json.dumps({"base": BASE, "fixed_exit": fixed_lint.returncode, "base_exit": base_lint.returncode, "comparison": "complete compiler-message objects excluding rendered text", "identical_diagnostics": fixed_diagnostics}, indent=2), encoding="utf-8")
         run("windows-core-clippy", ["cargo", "clippy", "--locked", "-p", "tokscale-core", "--all-features", "--", "-D", "warnings"])
     run("workspace-tests", ["cargo", "test", "--workspace", "--all-features"])
     run("build-cli", ["cargo", "build", "--locked", "-p", "tokscale-cli"])
@@ -150,6 +169,7 @@ elif mode in ("final", "windows-followthrough"):
     baseline = json.loads((OUT / "baseline-cli.json").read_text(encoding="utf-8"))
     assert {key: value["stdout"] for key, value in fixed.items()} == {key: value["stdout"] for key, value in baseline.items()}
     hashes = {path: hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for path in PRODUCT_PATHS}
-    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed" if mode == "final" else "Windows format/core Clippy/workspace tests/build passed; strict workspace Clippy has identical pinned-base failures", "synthetic_cli_invocations": len(fixed) + len(baseline), "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
+    counts = {"synthetic_cli_invocations": len(fixed) + len(baseline)} if mode == "final" else {"current_run_cli_invocations": len(fixed), "reused_baseline_cli_reports": len(baseline), "baseline_artifact_run_id": 37847250942}
+    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed" if mode == "final" else "Windows format/core Clippy/workspace tests/build passed; strict workspace Clippy has identical pinned-base failures", **counts, "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
 else:
     raise ValueError(mode)

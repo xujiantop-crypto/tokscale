@@ -12,6 +12,7 @@ PRODUCT_PATHS = [
     "crates/tokscale-core/src/sessions/codex.rs",
     "crates/tokscale-core/src/message_cache.rs",
     "crates/tokscale-cli/tests/cli_tests.rs",
+    "crates/tokscale-core/src/tui_signal.rs",
 ]
 OUT = Path("codex-source-validation")
 OUT.mkdir(exist_ok=True)
@@ -134,7 +135,27 @@ def cli_controls(phase):
 
 
 mode = sys.argv[1]
-if mode == "feedback-baseline":
+if mode == "tui-baseline":
+    fixed_source = {path: Path(path).read_bytes() for path in PRODUCT_PATHS}
+    try:
+        for path in PRODUCT_PATHS:
+            original = subprocess.check_output(["git", "show", "003dd688480840dd024e42faa1b0b3f08998756e:" + path]).decode("utf-8")
+            if path.endswith("/lib.rs"):
+                source = Path(path).read_text(encoding="utf-8")
+                start = source.index("    #[test]\n    #[serial]\n    fn missing_codex_usage_warning_coalesces_tui_refreshes_and_clears_resolved_sources()")
+                marker = "    /// Re-aim a live"
+                end = source.index(marker, start)
+                original = original.replace(marker, source[start:end] + marker, 1)
+            Path(path).write_text(original, encoding="utf-8", newline="\n")
+        name = "missing_codex_usage_warning_coalesces_tui_refreshes_and_clears_resolved_sources"
+        result = run("published-tui-regression", ["cargo", "test", "--locked", "-p", "tokscale-core", "--lib", name, "--", "--nocapture"], False)
+        assert result.returncode != 0 and "test result: FAILED" in result.stdout
+        assert any(name in line and "FAILED" in line for line in result.stdout.splitlines())
+        assert "left: 3" in result.stderr and "right: 1" in result.stderr, result.stderr
+    finally:
+        for path, content in fixed_source.items():
+            Path(path).write_bytes(content)
+elif mode == "feedback-baseline":
     fixed_source = {path: Path(path).read_bytes() for path in PRODUCT_PATHS}
     try:
         for path in PRODUCT_PATHS:

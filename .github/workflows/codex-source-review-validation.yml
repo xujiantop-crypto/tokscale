@@ -1,0 +1,39 @@
+name: Codex source review checks
+on:
+  push:
+    branches: [test/codex-source-review-20261009]
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tokscale-rust
+          cache-on-failure: true
+      - name: Verify review regressions fail on previous implementation
+        run: python scripts/codex-source-validation.py feedback-baseline
+      - name: Replay pinned default baseline controls
+        run: python scripts/codex-source-validation.py baseline
+      - name: Run required source and runtime checks
+        run: python scripts/codex-source-validation.py review-final
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: codex-source-review-${{ matrix.os }}
+          path: codex-source-validation

@@ -62,7 +62,15 @@ def cli_controls(phase):
         "headless-metered": (rows(HEADLESS_ACTIVITY, HEADLESS_USAGE), False, True),
         "malformed-metered": ("not json\n" + rows(ACTIVITY, MODEL, USAGE), False, True),
     }
-    for name, (content, should_warn, metered) in cases.items():
+    for kind in ["web_search_call", "tool_search_call", "tool_search_output", "image_generation_call"]:
+        cases["native-" + kind] = (rows({"type": "response_item", "payload": {"type": kind}}), True, False)
+    cases["synthetic-provider"] = (rows({"type": "session_meta", "payload": {"model_provider": "synthetic"}}, ACTIVITY), True, False, "synthetic")
+    cases["synthetic-model"] = (rows({"type": "turn_context", "payload": {"model": "hf:example/model"}}, ACTIVITY), True, False, "synthetic")
+    cases["synthetic-headless"] = (rows({"type": "item.completed", "model": "hf:example/model", "item": {"type": "agent_message", "text": "done"}}), True, False, "synthetic")
+    cases["synthetic-openai-excluded"] = (rows(MODEL, ACTIVITY), False, False, "synthetic")
+    for name, case in cases.items():
+        content, should_warn, metered = case[:3]
+        client = case[3] if len(case) == 4 else "codex"
         home = (OUT / (phase + "-fixtures") / name).resolve()
         sessions = home / ".codex/sessions"
         sessions.mkdir(parents=True, exist_ok=True)
@@ -77,7 +85,7 @@ def cli_controls(phase):
         for key in ["CODEX_HOME", "TOKSCALE_EXTRA_DIRS", "TOKSCALE_HEADLESS_DIR"]:
             env.pop(key, None)
         for iteration in range(2):
-            command = [str(binary), "--no-spinner", "monthly", "--json", "--client", "codex", "--home", str(home), "--since", "2026-05-01", "--until", "2026-05-31"]
+            command = [str(binary), "--no-spinner", "monthly", "--json", "--client", client, "--home", str(home), "--since", "2026-05-01", "--until", "2026-05-31"]
             completed = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", env=env)
             assert completed.returncode == 0, completed.stderr
             report = json.loads(completed.stdout)
@@ -96,7 +104,31 @@ def cli_controls(phase):
 
 
 mode = sys.argv[1]
-if mode == "baseline":
+if mode == "feedback-baseline":
+    fixed_source = {path: Path(path).read_bytes() for path in PRODUCT_PATHS}
+    try:
+        for path in PRODUCT_PATHS:
+            original = subprocess.check_output(["git", "show", "012f96da8c40c78c80ded4c0577991b323a85e28:" + path]).decode("utf-8")
+            source = Path(path).read_text(encoding="utf-8")
+            if path.endswith("/lib.rs"):
+                start = source.index("    #[test]\n    #[serial]\n    fn missing_codex_usage_warning_tracks_synthetic_activity()")
+                marker = "    /// Re-aim a live"
+                end = source.index(marker, start)
+                original = original.replace(marker, source[start:end] + marker, 1)
+            elif path.endswith("/codex.rs"):
+                start = source.index("    #[test]\n    fn missing_usage_recognizes_native_tool_items()")
+                marker = "    #[test]\n    fn missing_usage_accepts_zero_native_and_headless_counters()"
+                end = source.index(marker, start)
+                original = original.replace(marker, source[start:end] + marker, 1)
+            Path(path).write_text(original, encoding="utf-8", newline="\n")
+        for name in ["missing_codex_usage_warning_tracks_synthetic_activity", "missing_usage_recognizes_native_tool_items"]:
+            result = run("published-" + name, ["cargo", "test", "--locked", "-p", "tokscale-core", "--lib", name, "--", "--nocapture"], False)
+            assert result.returncode != 0 and "test result: FAILED" in result.stdout
+            assert any(name in line and "FAILED" in line for line in result.stdout.splitlines())
+    finally:
+        for path, content in fixed_source.items():
+            Path(path).write_bytes(content)
+elif mode == "baseline":
     fixed = {path: Path(path).read_bytes() for path in PRODUCT_PATHS}
     try:
         for path in PRODUCT_PATHS:
@@ -122,10 +154,10 @@ if mode == "baseline":
     finally:
         for path, content in fixed.items():
             Path(path).write_bytes(content)
-elif mode in ("final", "windows-followthrough"):
+elif mode in ("final", "windows-followthrough", "review-final"):
     run("format", ["cargo", "fmt", "--all", "--", "--check"])
     clippy_command = ["cargo", "clippy", "--locked", "--workspace", "--all-features", "--message-format=json", "--", "-D", "warnings"]
-    if mode == "final":
+    if mode == "final" or (mode == "review-final" and os.name != "nt"):
         run("clippy", clippy_command)
     else:
         assert os.name == "nt"
@@ -165,11 +197,13 @@ elif mode in ("final", "windows-followthrough"):
         run("windows-core-clippy", ["cargo", "clippy", "--locked", "-p", "tokscale-core", "--all-features", "--", "-D", "warnings"])
     run("workspace-tests", ["cargo", "test", "--workspace", "--all-features"])
     run("build-cli", ["cargo", "build", "--locked", "-p", "tokscale-cli"])
+    if mode == "review-final" and os.name != "nt":
+        run("rustdoc", ["cargo", "doc", "--locked", "--no-deps", "--workspace"])
     fixed = cli_controls("fixed")
     baseline = json.loads((OUT / "baseline-cli.json").read_text(encoding="utf-8"))
     assert {key: value["stdout"] for key, value in fixed.items()} == {key: value["stdout"] for key, value in baseline.items()}
     hashes = {path: hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for path in PRODUCT_PATHS}
-    counts = {"synthetic_cli_invocations": len(fixed) + len(baseline)} if mode == "final" else {"current_run_cli_invocations": len(fixed), "reused_baseline_cli_reports": len(baseline), "baseline_artifact_run_id": 37847250942}
-    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed" if mode == "final" else "Windows format/core Clippy/workspace tests/build passed; strict workspace Clippy has identical pinned-base failures", **counts, "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
+    counts = {"synthetic_cli_invocations": len(fixed) + len(baseline)} if mode != "windows-followthrough" else {"current_run_cli_invocations": len(fixed), "reused_baseline_cli_reports": len(baseline), "baseline_artifact_run_id": 37847250942}
+    (OUT / "result.json").write_text(json.dumps({"base": BASE, "head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "required_gates": "passed" if (mode == "final" or os.name != "nt") else "Windows format/core Clippy/workspace tests/build passed; strict workspace Clippy has identical pinned-base failures", **counts, "stdout_equal_to_base": True, "source_hashes": hashes}, indent=2), encoding="utf-8")
 else:
     raise ValueError(mode)

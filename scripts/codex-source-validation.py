@@ -68,6 +68,8 @@ def cli_controls(phase):
     cases["synthetic-model"] = (rows({"type": "turn_context", "payload": {"model": "hf:example/model"}}, ACTIVITY), True, False, "synthetic")
     cases["synthetic-headless"] = (rows({"type": "item.completed", "model": "hf:example/model", "item": {"type": "agent_message", "text": "done"}}), True, False, "synthetic")
     cases["synthetic-openai-excluded"] = (rows(MODEL, ACTIVITY), False, False, "synthetic")
+    for prefix in ["<environment_context>", "<system-reminder>", "<user_instructions>"]:
+        cases["injected-" + prefix[1:-1]] = (rows({"type": "event_msg", "payload": {"type": "user_message", "message": prefix + "fixture context"}}), False, False)
     for name, case in cases.items():
         content, should_warn, metered = case[:3]
         client = case[3] if len(case) == 4 else "codex"
@@ -98,6 +100,34 @@ def cli_controls(phase):
                 assert report["entries"] == [] and report["totalCost"] == 0, report
             report.pop("processingTimeMs", None)
             result[name + "-" + str(iteration)] = {"stdout": report, "warning": MARKER in completed.stderr}
+    task_cases = {
+        "unmetered": (rows(ACTIVITY), True),
+        "zero": (rows(ACTIVITY, ZERO), False),
+        "injected": (rows({"type": "event_msg", "payload": {"type": "user_message", "message": "<environment_context>fixture context"}}), False),
+        "metadata": (rows({"type": "session_meta", "payload": {"id": "empty"}}), False),
+        "malformed": (rows(ACTIVITY) + "not json\n", False),
+        "openclaw": (rows({"type": "session_meta", "payload": {"originator": "OpenClaw"}}, ACTIVITY), False),
+        "inherited": (rows(CHILD, PARENT, PARENT_TURN, ACTIVITY), False),
+    }
+    for name, (content, should_warn) in task_cases.items():
+        home = (OUT / (phase + "-task-fixtures") / name).resolve()
+        sessions = home / ".codex/sessions"
+        sessions.mkdir(parents=True, exist_ok=True)
+        (sessions / "rollout.jsonl").write_text(content, encoding="utf-8", newline="\n")
+        config = home / "config"
+        config.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ, TOKSCALE_CONFIG_DIR=str(config), TOKSCALE_PRICING_CACHE_ONLY="1", HTTP_PROXY="http://127.0.0.1:9", HTTPS_PROXY="http://127.0.0.1:9", ALL_PROXY="http://127.0.0.1:9")
+        for key in ["CODEX_HOME", "TOKSCALE_EXTRA_DIRS", "TOKSCALE_HEADLESS_DIR"]:
+            env.pop(key, None)
+        for iteration in range(2):
+            command = [str(binary), "--no-spinner", "report", "--no-summarize", "--json", "--home", str(home)]
+            completed = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", env=env)
+            assert completed.returncode == 0, completed.stderr
+            report = json.loads(completed.stdout)
+            assert report == [], report
+            assert (MARKER in completed.stderr) == (phase == "fixed" and should_warn), (name, completed.stderr)
+            (OUT / (phase + "-task-" + name + "-" + str(iteration) + "-stderr.log")).write_text(completed.stderr, encoding="utf-8")
+            result["task-" + name + "-" + str(iteration)] = {"stdout": report, "warning": MARKER in completed.stderr}
     (OUT / (phase + "-cli.json")).write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(phase, "CLI controls", len(result), flush=True)
     return result
@@ -120,11 +150,20 @@ if mode == "feedback-baseline":
                 marker = "    #[test]\n    fn missing_usage_accepts_zero_native_and_headless_counters()"
                 end = source.index(marker, start)
                 original = original.replace(marker, source[start:end] + marker, 1)
+            elif path.endswith("/cli_tests.rs"):
+                start = source.index("#[test]\nfn missing_codex_usage_task_report_warns")
+                marker = "#[test]\nfn test_monthly_v2_outputs"
+                end = source.index(marker, start)
+                original = original.replace(marker, source[start:end] + marker, 1)
             Path(path).write_text(original, encoding="utf-8", newline="\n")
-        for name in ["missing_codex_usage_warning_tracks_synthetic_activity", "missing_usage_recognizes_native_tool_items"]:
+        for name in ["missing_codex_usage_warning_tracks_synthetic_activity", "missing_codex_usage_warning_reaches_local_report_path", "missing_usage_recognizes_native_tool_items", "missing_usage_ignores_injected_user_context"]:
             result = run("published-" + name, ["cargo", "test", "--locked", "-p", "tokscale-core", "--lib", name, "--", "--nocapture"], False)
             assert result.returncode != 0 and "test result: FAILED" in result.stdout
             assert any(name in line and "FAILED" in line for line in result.stdout.splitlines())
+        name = "missing_codex_usage_task_report_warns_and_excludes_injected_context"
+        result = run("published-" + name, ["cargo", "test", "--locked", "-p", "tokscale-cli", "--test", "cli_tests", name, "--", "--nocapture"], False)
+        assert result.returncode != 0 and "test result: FAILED" in result.stdout
+        assert any(name in line and "FAILED" in line for line in result.stdout.splitlines())
     finally:
         for path, content in fixed_source.items():
             Path(path).write_bytes(content)

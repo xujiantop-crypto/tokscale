@@ -1,0 +1,40 @@
+name: Codex Rustdoc checks
+on:
+  push:
+    branches: [test/codex-source-rustdoc-20261009]
+permissions:
+  contents: read
+jobs:
+  rustdoc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tokscale-rust
+          cache-on-failure: true
+      - name: Build workspace docs with warnings denied
+        shell: bash
+        run: |
+          mkdir -p codex-rustdoc-validation
+          cargo doc --locked --no-deps --workspace 2>&1 | tee codex-rustdoc-validation/rustdoc.log
+      - name: Record validated source identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          paths = ["crates/tokscale-core/src/lib.rs", "crates/tokscale-core/src/sessions/codex.rs", "crates/tokscale-core/src/message_cache.rs", "crates/tokscale-cli/tests/cli_tests.rs"]
+          result = {"head": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(), "rustdoc_deny_warnings": "passed", "source_hashes": {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths}}
+          Path("codex-rustdoc-validation/result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: codex-rustdoc-validation
+          path: codex-rustdoc-validation
